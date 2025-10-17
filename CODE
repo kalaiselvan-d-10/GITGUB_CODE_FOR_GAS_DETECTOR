@@ -1,0 +1,154 @@
+// JUST DEFINING BLYNK TEMPLATE ID,NAME,TOKEN
+#define BLYNK_TEMPLATE_ID "TMPL3UiMZ9N1f"
+#define BLYNK_TEMPLATE_NAME "gas detection"
+#define BLYNK_AUTH_TOKEN "LGvEh1VK921m0BQwJv6TwyqjqytQi5iP"
+// INCLUDING LIBRARIES 
+#include <Wire.h>
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+// DISPLAY SETTING FOR 0LED BASED ON SIZE
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+// ADAFRUIT_SSD1306 USED TO CONTROL THE OLED DISPLAY
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+// JUST DEFINING PIN CONNECTION
+#define SENSOR_PIN 34
+#define BUZZER_PIN 26
+// JUST DEFINING BLYNK TOKEN,SSID,PASS
+char auth[] = BLYNK_AUTH_TOKEN;
+char ssid[] = "EEC-HACKATHON";
+char pass[] = "eec@2025";
+// VARIABLE TO DETECT THE GAS LEAKAGE
+bool gasAlertActive = false;
+unsigned long lastNotificationTime = 0;
+const unsigned long NOTIFICATION_COOLDOWN = 60000; // 1 minute cooldown
+// TIMER FOR BLYNK
+BlynkTimer timer;
+WidgetLED ledV1(V1);
+// FUNCTION TO SETUP
+void setup() {
+  Serial.begin(115200);
+  // Initialize OLED
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;);
+  }
+  // CLEARING THE OLED AND SHOWING A NEW SCREEN WITH SOME STARTUP MESSAGES
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0,0);
+  display.println("Gas Detection");
+  display.println("System Starting...");
+  display.display();
+  delay(2000);
+  // INPUT FOR SENSOR PIN AND OUTPUT FOR BUZZER
+  pinMode(SENSOR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+  // CONNECTING ESP32 MICRO CONTROLLER TO WIFI
+  Serial.println("System Initializing...");
+  Blynk.begin(auth, ssid, pass, "blynk.cloud", 80);
+  // WAITING FOR CONNECTING
+  while (!Blynk.connected()) {
+    delay(500);
+    Serial.print(".");
+  }
+  // CHECKING GAS LEVEL FOR EVERY 2 MINUTES 
+  Serial.println("\nConnected to Blynk!");
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.println("System Ready!");
+  display.println("WiFi: Connected");
+  display.println("Blynk: Connected");
+  display.display();
+  delay(2000);
+  timer.setInterval(2000L, checkGasLevel);
+}
+// JUST UPDATING THE OLED FUNCTION
+void updateOLED(int gasLevel, String status) {
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.setTextSize(1);
+  display.println("GAS DETECTION SYSTEM");
+  display.println("-------------------");
+  display.setTextSize(2);
+  display.print("Gas: ");
+  display.print(gasLevel);
+  display.println("%");
+  display.setTextSize(1);
+  display.println();
+  display.print("Status: ");
+  display.println(status);
+  // Show WiFi status
+  display.print("WiFi: ");
+  display.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+  display.display();
+}
+// FUNCTION TO CHECK GAS LEVEL
+void checkGasLevel() {
+  int sensorValue = analogRead(SENSOR_PIN);
+  int gasLevel = map(sensorValue, 0, 4095, 0, 100);
+// SENDS GAS LEVEL TO THE BLYNK GAUGE WIDGET
+  Serial.print("Gas Level: ");
+  Serial.print(gasLevel);
+  Serial.print(" (Raw: ");
+  Serial.print(sensorValue);
+  Serial.println(")");
+  // Send to Blynk gauge
+  Blynk.virtualWrite(V0, gasLevel);
+  // Check gas threshold
+  if (gasLevel >= 50) {
+    if (!gasAlertActive) {
+      triggerGasAlert(gasLevel);
+      gasAlertActive = true;
+    }
+    // Keep buzzer on and LED on during alert
+    digitalWrite(BUZZER_PIN, HIGH);
+    ledV1.on();
+    updateOLED(gasLevel, "ALERT! GAS LEAK");
+  } else {
+    // Gas level normal
+    if (gasAlertActive) {
+      clearGasAlert();
+      gasAlertActive = false;
+    }
+    digitalWrite(BUZZER_PIN, LOW);
+    ledV1.off();
+    updateOLED(gasLevel, "Normal");
+  }
+}
+void triggerGasAlert(int gasLevel) {
+  Serial.println("⚠ GAS LEAK DETECTED! Sending alerts...");
+  // Update OLED with alert
+  updateOLED(gasLevel, "ALERT! GAS LEAK");
+  // Trigger Blynk Event
+  Blynk.logEvent("the_gas_has_been_detected", String("Gas level detected: ") + gasLevel + "%");
+  // Send push notification
+  Blynk.virtualWrite(V2, "GAS LEAK! Level: " + String(gasLevel) + "%");
+  lastNotificationTime = millis();
+}
+void clearGasAlert() {
+  Serial.println("Gas level returned to normal");
+  Blynk.virtualWrite(V2, "Gas level normal");
+}
+BLYNK_WRITE(V3) {
+  int buzzerState = param.asInt();
+  digitalWrite(BUZZER_PIN, buzzerState);
+}
+BLYNK_WRITE(V4) {
+  if (param.asInt()) {
+    triggerGasAlert(75); // Test with 75% level
+  }
+}
+BLYNK_CONNECTED() {
+  Serial.println("Blynk connected successfully");
+  Blynk.syncVirtual(V0, V1, V2);
+}
+void loop() {
+  Blynk.run();
+  timer.run();
+}
